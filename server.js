@@ -156,9 +156,12 @@ app.post('/api/send-email', authMiddleware, async (req, res) => {
       }
     }
 
+    const replyToEmail = process.env.SMTP_REPLY_TO || process.env.SMTP_USER_EMAIL || fromEmail;
+
     const payload = {
       sender:      { name: fromName, email: fromEmail },
       to:          [{ email: to, name: toName || to }],
+      replyTo:     { email: replyToEmail, name: fromName },
       subject:     emailSubject,
       htmlContent: htmlContent
     };
@@ -180,7 +183,7 @@ app.post('/api/send-email', authMiddleware, async (req, res) => {
     }
 
     const result = await resp.json();
-    console.log('Email enviado via Brevo API:', result.messageId);
+    console.log('✅ Email enviado via Brevo API:', result.messageId);
     res.json({ success: true, message: 'E-mail enviado com sucesso', messageId: result.messageId });
   } catch (e) {
     console.error('Erro ao enviar e-mail:', e);
@@ -286,6 +289,7 @@ app.get('/api/:store', authMiddleware, async (req, res) => {
   try {
     const { data, error } = await supabase.from(store).select('id, data');
     if (error) throw error;
+    // Retorna array no mesmo formato do IndexedDB: [{id, ...data}]
     const result = (data || []).map(row => ({ id: row.id, ...row.data }));
     res.json(result);
   } catch (e) {
@@ -426,8 +430,10 @@ app.get('/api/whatsapp/qrcode', authMiddleware, async (req, res) => {
 // ─── INICIALIZAÇÃO DO BANCO (config padrão) ──────────────────────────────────
 async function initDatabase() {
   try {
+    // Verifica se já existe config
     const { data } = await supabase.from('config').select('id').eq('id', 1).single();
     if (!data) {
+      // Cria config padrão com admin
       const defaultConfig = {
         adminUser: 'admin',
         adminHash: hashPwd('Ne1505@15'),
@@ -439,17 +445,18 @@ async function initDatabase() {
         cargos: ['Operador de Andaime','Montador','Auxiliar','Supervisor','Administrativo','Almoxarife','Motorista','Encarregado']
       };
       await supabase.from('config').upsert({ id: 1, data: defaultConfig });
-      console.log('Config padrão criada');
+      console.log('✅ Config padrão criada (admin/Ne1505@15)');
     } else {
-      console.log('Config já existe no banco');
+      console.log('✅ Config já existe no banco');
     }
   } catch (e) {
-    console.error('Erro ao inicializar banco:', e.message);
+    console.error('⚠️  Erro ao inicializar banco (tabela pode não existir ainda):', e.message);
   }
 }
 
 // ─── START ───────────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
-  console.log(`Nesfera RH Backend na porta ${PORT}`);
+  console.log(`\n🚀 Nesfera RH Backend rodando na porta ${PORT}`);
+  console.log(`   Health: http://localhost:${PORT}/health`);
   await initDatabase();
 });
