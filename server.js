@@ -134,8 +134,8 @@ app.post('/api/send-email', authMiddleware, async (req, res) => {
   if (!to) return res.status(400).json({ error: 'Destinatário obrigatório' });
 
   try {
-    const fromName  = process.env.SMTP_FROM_NAME  || 'Nesfera RH';
-    const fromEmail = process.env.SMTP_FROM_EMAIL || 'adriian.al33@gmail.com';
+    const fromName  = process.env.SMTP_FROM_NAME  || 'Andaimes Nesfera';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'rh@andaimesnesfera.com';
     const emailSubject = subject || `Documentos Nesfera — ${toName || to}`;
 
     const htmlContent = html || (message
