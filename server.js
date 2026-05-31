@@ -1,13 +1,12 @@
 /**
  * Nesfera RH — Backend API
- * Node.js + Express + Supabase + Nodemailer + Evolution API
+ * Node.js + Express + Supabase + Brevo API + Evolution API
  */
 
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 
@@ -128,58 +127,61 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// ─── ENVIO DE EMAIL ──────────────────────────────────────────────────────────
+// ─── ENVIO DE EMAIL (Brevo API v3 — HTTP, sem SMTP) ─────────────────────────
 app.post('/api/send-email', authMiddleware, async (req, res) => {
-  const { to, toName, subject, message, attachments } = req.body;
+  const { to, toName, subject, message, html, attachments } = req.body;
 
   if (!to) return res.status(400).json({ error: 'Destinatário obrigatório' });
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,        // ex: mail.nesfera.com.br
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_PORT === '465',
-      auth: {
-        user: process.env.SMTP_USER,      // ex: rh@nesfera.com.br
-        pass: process.env.SMTP_PASS
-      },
-      tls: {
-        rejectUnauthorized: false         // Hostgator às vezes exige isso
-      }
-    });
+    const fromName  = process.env.SMTP_FROM_NAME  || 'Nesfera RH';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || 'adriian.al33@gmail.com';
+    const emailSubject = subject || `Documentos Nesfera — ${toName || to}`;
 
-    // Monta anexos a partir de base64 data URIs
-    const mailAttachments = [];
+    const htmlContent = html || (message
+      ? `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${message.replace(/\n/g, '<br>')}</div>`
+      : '<p>Documentos em anexo.</p>');
+
+    // Monta anexos no formato Brevo API
+    const brevoAttachments = [];
     if (Array.isArray(attachments)) {
       for (const att of attachments) {
         if (!att.data) continue;
         let base64Data = att.data;
-        if (base64Data.includes(',')) {
-          base64Data = base64Data.split(',')[1];
-        }
-        mailAttachments.push({
-          filename: att.filename || 'documento.pdf',
-          content: Buffer.from(base64Data, 'base64'),
-          contentType: att.mimeType || 'application/octet-stream'
+        if (base64Data.includes(',')) base64Data = base64Data.split(',')[1];
+        brevoAttachments.push({
+          content: base64Data,
+          name: att.filename || 'documento.pdf'
         });
       }
     }
 
-    const fromName = process.env.SMTP_FROM_NAME || 'Nesfera RH';
-    const emailSubject = subject || `Documentos Nesfera — ${toName || to}`;
+    const payload = {
+      sender:      { name: fromName, email: fromEmail },
+      to:          [{ email: to, name: toName || to }],
+      subject:     emailSubject,
+      htmlContent: htmlContent
+    };
+    if (brevoAttachments.length > 0) payload.attachment = brevoAttachments;
 
-    await transporter.sendMail({
-      from: `"${fromName}" <${process.env.SMTP_USER}>`,
-      to: toName ? `"${toName}" <${to}>` : to,
-      subject: emailSubject,
-      text: message,
-      html: message
-        ? `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${message.replace(/\n/g, '<br>')}</div>`
-        : undefined,
-      attachments: mailAttachments
+    const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': process.env.BREVO_API_KEY
+      },
+      body: JSON.stringify(payload)
     });
 
-    res.json({ success: true, message: 'E-mail enviado com sucesso' });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('Brevo API erro:', resp.status, errText);
+      throw new Error(`Brevo ${resp.status}: ${errText}`);
+    }
+
+    const result = await resp.json();
+    console.log('Email enviado via Brevo API:', result.messageId);
+    res.json({ success: true, message: 'E-mail enviado com sucesso', messageId: result.messageId });
   } catch (e) {
     console.error('Erro ao enviar e-mail:', e);
     res.status(500).json({ error: 'Falha ao enviar e-mail: ' + e.message });
@@ -284,7 +286,6 @@ app.get('/api/:store', authMiddleware, async (req, res) => {
   try {
     const { data, error } = await supabase.from(store).select('id, data');
     if (error) throw error;
-    // Retorna array no mesmo formato do IndexedDB: [{id, ...data}]
     const result = (data || []).map(row => ({ id: row.id, ...row.data }));
     res.json(result);
   } catch (e) {
@@ -425,10 +426,8 @@ app.get('/api/whatsapp/qrcode', authMiddleware, async (req, res) => {
 // ─── INICIALIZAÇÃO DO BANCO (config padrão) ──────────────────────────────────
 async function initDatabase() {
   try {
-    // Verifica se já existe config
     const { data } = await supabase.from('config').select('id').eq('id', 1).single();
     if (!data) {
-      // Cria config padrão com admin
       const defaultConfig = {
         adminUser: 'admin',
         adminHash: hashPwd('Ne1505@15'),
@@ -440,18 +439,17 @@ async function initDatabase() {
         cargos: ['Operador de Andaime','Montador','Auxiliar','Supervisor','Administrativo','Almoxarife','Motorista','Encarregado']
       };
       await supabase.from('config').upsert({ id: 1, data: defaultConfig });
-      console.log('✅ Config padrão criada (admin/Ne1505@15)');
+      console.log('Config padrão criada');
     } else {
-      console.log('✅ Config já existe no banco');
+      console.log('Config já existe no banco');
     }
   } catch (e) {
-    console.error('⚠️  Erro ao inicializar banco (tabela pode não existir ainda):', e.message);
+    console.error('Erro ao inicializar banco:', e.message);
   }
 }
 
 // ─── START ───────────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
-  console.log(`\n🚀 Nesfera RH Backend rodando na porta ${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
+  console.log(`Nesfera RH Backend na porta ${PORT}`);
   await initDatabase();
 });
