@@ -13,13 +13,13 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ─── Middlewares ────────────────────────────────────────────────────────────
+// ─── Middlewares ────────────────────────────────────────────────────────────h
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Serve o HTML principal (quando colocado na pasta /public)
-app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'Nesfera-RH.html')));
 
 // ─── Supabase ────────────────────────────────────────────────────────────────
 const supabase = createClient(
